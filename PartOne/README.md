@@ -22,6 +22,6 @@ JS 2025; not liable for any existing bugs in the code.
 
 
 ## Future Options:
-optimize better: GPU / outsourced computer / more efficient algo
-prune inefficient / incorrect options sooner
-analyze the structure of the problem, what does the given numbers tell us about the type of number we will have at the end
+- optimize better: GPU / outsourced computer / more efficient algo
+- prune inefficient / incorrect options sooner
+- analyze the structure of the problem, what does the given numbers tell us about the type of number we will have at the end
