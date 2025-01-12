@@ -19,3 +19,9 @@ This will be an opportunity to try and solve a low stakes problem out of your co
 These puzzles can be submitted until the last day of the month and you can work on this puzzle throughout that whole time. Looking forward to seeing of what you can come up with :-) 
 
 JS 2025; not liable for any existing bugs in the code.
+
+
+## Future Options:
+optimize better: GPU / outsourced computer / more efficient algo
+prune inefficient / incorrect options sooner
+analyze the structure of the problem, what does the given numbers tell us about the type of number we will have at the end
