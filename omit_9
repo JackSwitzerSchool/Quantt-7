@@ -1,0 +1,237 @@
+
+import sys
+
+def row_to_int(grid, r):
+    """
+    Convert the r-th row into a 9-digit integer.
+    Leading zeros are allowed in Python's int conversion.
+    """
+    return int("".join(str(d) for d in grid[r]))
+
+def print_grid(grid):
+    """Utility to print the Sudoku grid in 9×9 format."""
+    for row in grid:
+        print(" ".join(str(x) for x in row))
+    print()
+
+def valid_sudoku_so_far(grid, rows_used, cols_used, boxes_used):
+    """
+    Checks if the *partially filled* grid has any violation
+    (a repeated digit in a row/col/box).
+    Because we maintain rows_used/etc. carefully, we normally know
+    it's consistent if we haven't broken constraints. But a sanity check
+    could be done here if desired.
+    """
+    # As an optimization, we rely on our sets (rows_used, etc.) to keep it valid.
+    # If you want an explicit re-check, implement it here.
+    return True
+
+def box_index(r, c):
+    """3×3 box index from row,col."""
+    return (r // 3) * 3 + (c // 3)
+
+def fill_order():
+    """
+    Returns a list of (row, col) pairs in the order we want to fill:
+      1) Middle row (row=4) first, left to right,
+      2) Then rows 0..3, in normal order,
+      3) Then rows 5..8, in normal order.
+
+    That way, we lock in the middle row early and know M.
+    """
+    order = []
+    # Middle row first
+    row_mid = 4
+    for c in range(9):
+        order.append((row_mid, c))
+    # Then rows 0..3
+    for r in range(0, 4):
+        for c in range(9):
+            order.append((r, c))
+    # Then rows 5..8
+    for r in range(5, 9):
+        for c in range(9):
+            order.append((r, c))
+    return order
+
+def solve_sudoku(
+    grid,
+    cell_idx,
+    fill_seq,
+    rows_used,
+    cols_used,
+    boxes_used,
+    middle_row_value
+):
+    """
+    Backtracking solver with an added GCD constraint:
+    - The 'fill_seq' is the custom order of cells we fill.
+    - 'middle_row_value' is None until row #4 is fully assigned. Then it becomes
+      the integer of the 5th row (index=4). All other rows must be multiples of it.
+
+    rows_used[r], cols_used[c], boxes_used[b] = sets of digits used so far.
+
+    Returns True if a valid solution is found, False otherwise.
+    """
+
+    if cell_idx == len(fill_seq):
+        # All cells assigned -> puzzle solved
+        return True
+
+    (r, c) = fill_seq[cell_idx]
+
+    # If this cell is already given (not -1), skip forward
+    if grid[r][c] != -1:
+        # Possibly check if we just finished a row => check gcd constraint
+        if c == 8:
+            # Just filled the last column of row r
+            # If middle_row_value is known and r != 4, check multiple-of-M
+            if middle_row_value is not None and r != 4:
+                row_val = row_to_int(grid, r)
+                if row_val % middle_row_value != 0:
+                    return False
+        return solve_sudoku(grid, cell_idx+1, fill_seq,
+                            rows_used, cols_used, boxes_used,
+                            middle_row_value)
+
+    # Otherwise we try all possible digits from 0..8
+    # BUT if this is row=4 (the middle row) and we haven't completed it yet,
+    # we want to try digits in *descending* order to aim for the largest M first.
+    row_is_middle = (r == 4)
+
+    # Decide the order of candidates:
+    candidates = list(range(9))
+    # If row_is_middle, use descending order:
+    if row_is_middle:
+        candidates = sorted(candidates, reverse=True)
+
+    for val in candidates:
+        # Check if 'val' is allowed in (r,c)
+        if val in rows_used[r]:
+            continue
+        if val in cols_used[c]:
+            continue
+        b_idx = box_index(r, c)
+        if val in boxes_used[b_idx]:
+            continue
+
+        # Place 'val'
+        grid[r][c] = val
+        rows_used[r].add(val)
+        cols_used[c].add(val)
+        boxes_used[b_idx].add(val)
+
+        # If we just finished the middle row (c==8 and r==4),
+        # compute M from row #4
+        new_middle_row_value = middle_row_value
+        if r == 4 and c == 8:
+            # We have fully assigned row #4
+            new_middle_row_value = row_to_int(grid, 4)
+            # If new_middle_row_value == 0, that means the row is 000000000,
+            # which might be "valid" but then all rows must be multiples of 0,
+            # which is impossible. We can skip that case immediately.
+            if new_middle_row_value == 0:
+                # backtrack
+                # Remove 'val' and continue
+                grid[r][c] = -1
+                rows_used[r].remove(val)
+                cols_used[c].remove(val)
+                boxes_used[b_idx].remove(val)
+                continue
+
+        # If we just filled the last cell of some other row,
+        # and we already know M, check divisibility.
+        if c == 8 and r != 4 and new_middle_row_value is not None:
+            row_val = row_to_int(grid, r)
+            if row_val % new_middle_row_value != 0:
+                # Not divisible -> backtrack
+                grid[r][c] = -1
+                rows_used[r].remove(val)
+                cols_used[c].remove(val)
+                boxes_used[b_idx].remove(val)
+                continue
+
+        # Recurse
+        if solve_sudoku(grid, cell_idx+1, fill_seq,
+                        rows_used, cols_used, boxes_used,
+                        new_middle_row_value):
+            return True
+
+        # Backtrack
+        grid[r][c] = -1
+        rows_used[r].remove(val)
+        cols_used[c].remove(val)
+        boxes_used[b_idx].remove(val)
+
+    # If no digit worked, return False
+    return False
+
+def main():
+    #----------------------------------------------------------------------
+    # 1) Define your Sudoku puzzle with digits in {0..8} or -1 for blanks.
+    #    Example puzzle (completely made up). Adjust as needed.
+    #    If you have known "givens," place them accordingly.
+    #    Keep in mind the GCD constraint is very restrictive.
+    #----------------------------------------------------------------------
+    puzzle = [
+        [-1, -1, -1,  -1, -1, -1,  -1, -1, -1],  # row 0
+        [-1, -1, -1,  -1, -1, -1,  -1, -1, -1],  # row 1
+        [-1, -1, -1,  -1, -1, -1,  -1, -1, -1],  # row 2
+
+        [-1, -1, -1,  -1, -1, -1,  -1, -1, -1],  # row 3
+        [-1, -1, -1,  -1, -1, -1,  -1, -1, -1],  # row 4 (middle row)
+        [-1, -1, -1,  -1, -1, -1,  -1, -1, -1],  # row 5
+
+        [-1, -1, -1,  -1, -1, -1,  -1, -1, -1],  # row 6
+        [-1, -1, -1,  -1, -1, -1,  -1, -1, -1],  # row 7
+        [-1, -1, -1,  -1, -1, -1,  -1, -1, -1],  # row 8
+    ]
+
+    #----------------------------------------------------------------------
+    # 2) Initialize helper structures: sets of used digits in row/col/box
+    #----------------------------------------------------------------------
+    rows_used = [set() for _ in range(9)]
+    cols_used = [set() for _ in range(9)]
+    boxes_used = [set() for _ in range(9)]
+
+    # Fill them from the puzzle's givens
+    for r in range(9):
+        for c in range(9):
+            val = puzzle[r][c]
+            if val != -1:
+                # Check if repeated
+                if val in rows_used[r] or val in cols_used[c] or val in boxes_used[box_index(r,c)]:
+                    print("Invalid puzzle givens: repeated digit in row/col/box.")
+                    sys.exit(1)
+                rows_used[r].add(val)
+                cols_used[c].add(val)
+                boxes_used[box_index(r,c)].add(val)
+
+    #----------------------------------------------------------------------
+    # 3) Create a custom fill order that starts with the middle row.
+    #----------------------------------------------------------------------
+    seq = fill_order()
+
+    #----------------------------------------------------------------------
+    # 4) Solve with backtracking + the gcd constraint
+    #----------------------------------------------------------------------
+    solved = solve_sudoku(puzzle, 0, seq, rows_used, cols_used, boxes_used, middle_row_value=None)
+
+    if not solved:
+        print("No solution found under these constraints.")
+    else:
+        print("Solution found!\n")
+        print_grid(puzzle)
+        # Print the middle row's integer (the GCD value we ended up with)
+        mid_val = row_to_int(puzzle, 4)
+        print(f"Middle row value (divisor) = {mid_val}")
+        # Optional: confirm each row is divisible by mid_val
+        for r in range(9):
+            rv = row_to_int(puzzle, r)
+            if rv % mid_val != 0:
+                print(f"ERROR: row {r} = {rv} is NOT divisible by {mid_val}")
+            else:
+                print(f"Row {r} = {rv} is divisible by {mid_val}")
+
+if __name__ == "__main__":
+    main()
