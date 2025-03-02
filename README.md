@@ -2,12 +2,13 @@ Next Steps / Broad Framework:
 
 1. Find and collect data
 	- find datasets, apis, historical/live data etc
+
 Data Types:
-1.i) Historic Betting odds and results, opening & closing
-1.ii) Data Golf - historic player performance
-1.iii) Real time - injury status, player momentum / flailing
-1.iv) Course data - weather, location, travel time, etc.
-1.v) Anything else
+- 1.i) Historic Betting odds and results, opening & closing
+- 1.ii) Data Golf - historic player performance
+- 1.iii) Real time - injury status, player momentum / flailing
+- 1.iv) Course data - weather, location, travel time, etc.
+- 1.v) Anything else
 
 2. Clean and Preprocess Data
 	- Handle missing values
