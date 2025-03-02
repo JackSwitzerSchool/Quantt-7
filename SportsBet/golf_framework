@@ -1,0 +1,114 @@
+import pandas as pd
+import numpy as np
+import requests
+import xgboost as xgb
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+from transformers import pipeline
+from datetime import datetime
+
+### Step 1: Collect Data ###
+# Function to fetch golf odds from an API
+def fetch_golf_odds():
+    url = "https://api.sportsbook.com/golf-odds"  # Replace with actual API
+    response = requests.get(url)
+    return pd.DataFrame(response.json())
+
+# Function to fetch historical player stats from Data Golf
+def fetch_player_stats():
+    url = "https://api.datagolf.com/player-stats"  # Replace with actual API
+    response = requests.get(url)
+    return pd.DataFrame(response.json())
+
+# Function to fetch historical odds movement
+def fetch_historical_odds():
+    url = "https://api.sportsbook.com/golf-historical-odds"  # Replace with actual API
+    response = requests.get(url)
+    return pd.DataFrame(response.json())
+
+# Function to fetch weather data
+def fetch_weather(course_location):
+    url = f"https://api.weather.com/v3/weather?location={course_location}"  # Replace with actual API
+    response = requests.get(url)
+    return response.json()
+
+# Function to fetch and analyze player news
+def analyze_player_news(player_name):
+    url = f"https://newsapi.org/v2/everything?q={player_name}&apiKey=YOUR_NEWS_API_KEY"
+    response = requests.get(url)
+    articles = response.json().get("articles", [])
+    sentiment_analyzer = pipeline("sentiment-analysis")
+    sentiment_scores = [sentiment_analyzer(article["content"])[0]["score"] for article in articles]
+    return np.mean(sentiment_scores) if sentiment_scores else 0
+
+### Step 2: Feature Engineering ###
+def create_feature_set():
+    odds_df = fetch_golf_odds()
+    stats_df = fetch_player_stats()
+    historical_odds_df = fetch_historical_odds()
+    features = []
+    
+    for _, row in odds_df.iterrows():
+        player_name = row['player']
+        implied_prob = 1 / row['odds']
+        player_stats = stats_df[stats_df['player'] == player_name].iloc[0]
+        weather = fetch_weather(row['course_location'])
+        sentiment = analyze_player_news(player_name)
+        
+        # Calculate odds movement (delta between opening and closing odds)
+        historical_player_odds = historical_odds_df[historical_odds_df['player'] == player_name]
+        if not historical_player_odds.empty:
+            odds_movement = historical_player_odds.iloc[-1]['odds'] - historical_player_odds.iloc[0]['odds']
+        else:
+            odds_movement = 0
+
+        features.append({
+            'player': player_name,
+            'odds': row['odds'],
+            'implied_probability': implied_prob,
+            'strokes_gained_total': player_stats['SG_Total'],
+            'strokes_gained_putting': player_stats['SG_Putting'],
+            'strokes_gained_approach': player_stats['SG_Approach'],
+            'strokes_gained_tee': player_stats['SG_Tee'],
+            'wind_speed': weather['windSpeed'],
+            'temperature': weather['temperature'],
+            'rain': weather['rain'],
+            'news_sentiment': sentiment,
+            'odds_movement': odds_movement,
+            'travel_distance': player_stats['travel_distance'],
+            'home_course': int(player_stats['home_course']),
+            'momentum': player_stats['recent_success'],
+            'injury_status': player_stats['injury_status'],
+            'actual_result': row['actual_result']  # 1 if they win/make the cut, 0 otherwise
+        })
+    
+    return pd.DataFrame(features)
+
+### Step 3: Train XGBoost Model ###
+data = create_feature_set()
+data = data[~data['player'].str.contains("Tiger Woods")]
+X = data.drop(columns=['player', 'actual_result'])
+y = data['actual_result']
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+model = xgb.XGBClassifier(n_estimators=100, learning_rate=0.05, max_depth=4)
+model.fit(X_train, y_train)
+
+y_pred = model.predict(X_test)
+accuracy = accuracy_score(y_test, y_pred)
+print(f'Model Accuracy: {accuracy:.2f}')
+
+### Step 4: Use Model to Find +EV Bets ###
+def predict_ev_bets():
+    data = create_feature_set()
+    data['predicted_win_prob'] = model.predict_proba(data.drop(columns=['player', 'actual_result']))[:,1]
+    data['EV'] = (data['predicted_win_prob'] * data['odds']) - 1  # Expected value formula
+    
+    # Filter for positive EV bets
+    positive_ev_bets = data[data['EV'] > 0]
+    return positive_ev_bets.sort_values(by='EV', ascending=False).head(5)  # Focus on top 3-5 most likely wins
+
+# Run the betting model
+positive_ev_bets = predict_ev_bets()
+print(positive_ev_bets)
