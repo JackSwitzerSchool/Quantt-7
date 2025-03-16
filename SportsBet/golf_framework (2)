@@ -1,0 +1,126 @@
+import pandas as pd
+import numpy as np
+import requests
+import xgboost as xgb
+import shap
+from sklearn.model_selection import train_test_split, cross_val_score
+from sklearn.metrics import accuracy_score, log_loss, roc_auc_score
+from datetime import datetime
+import os
+import pickle
+
+### Step 1: Collect Data with Error Handling and Caching ###
+def fetch_data(url, cache_file):
+    if os.path.exists(cache_file):
+        with open(cache_file, 'rb') as f:
+            return pickle.load(f)
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        data = response.json()
+        with open(cache_file, 'wb') as f:
+            pickle.dump(data, f)
+        return data
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching data: {e}")
+        return None
+
+def fetch_golf_odds():
+    url = "https://api.the-odds-api.com/v4/sports/golf/events/odds"  # Replace with actual API
+    return pd.DataFrame(fetch_data(url, "golf_odds_cache.pkl"))
+
+def fetch_datagolf_data():
+    url = "https://datagolf.com/api/historical-stats"  # Replace with actual API
+    return pd.DataFrame(fetch_data(url, "datagolf_stats_cache.pkl"))
+
+def fetch_weather_data():
+    url = "https://datagolf.com/api/weather"  # Replace with actual API
+    return pd.DataFrame(fetch_data(url, "weather_data_cache.pkl"))
+
+### Step 2: Feature Engineering ###
+def create_feature_set():
+    odds_df = fetch_golf_odds()
+    historical_data_df = fetch_datagolf_data()
+    weather_df = fetch_weather_data()
+    features = []
+    
+    for _, row in odds_df.iterrows():
+        player_name = row['player']
+        implied_prob = 1 / row['odds']
+        player_stats = historical_data_df[historical_data_df['player'] == player_name]
+        
+        if player_stats.empty:
+            continue
+        player_stats = player_stats.iloc[0]
+        
+        # Calculate odds movement (delta between opening and closing odds)
+        historical_player_odds = historical_data_df[historical_data_df['player'] == player_name]
+        odds_movement = (historical_player_odds.iloc[-1]['odds'] - historical_player_odds.iloc[0]['odds']) if not historical_player_odds.empty else 0
+        
+        # Fetch weather data safely
+        course_weather = weather_df[weather_df['course'] == row['course']]
+        if course_weather.empty:
+            continue
+        course_weather = course_weather.iloc[0]
+        
+        # Additional features: Course history and recent form
+        course_history = player_stats.get('course_history', 0)  # Placeholder for course-specific performance
+        recent_form = player_stats.get('recent_form', 0)  # Placeholder for recent performance (e.g., avg score last 5 tournaments)
+
+        features.append({
+            'player': player_name,
+            'odds': row['odds'],
+            'implied_probability': implied_prob,
+            'strokes_gained_total': player_stats['SG_Total'],
+            'strokes_gained_putting': player_stats['SG_Putting'],
+            'strokes_gained_approach': player_stats['SG_Approach'],
+            'strokes_gained_tee': player_stats['SG_Tee'],
+            'wind_speed': course_weather['wind_speed'],
+            'temperature': course_weather['temperature'],
+            'rain': course_weather['rain'],
+            'odds_movement': odds_movement,
+            'travel_distance': player_stats['travel_distance'],
+            'home_course': int(player_stats['home_course']),
+            'momentum': player_stats['recent_success'],
+            'injury_status': player_stats['injury_status'],
+            'fatigue_level': player_stats['fatigue_level'],
+            'course_fit_score': player_stats['course_fit_score'],
+            'course_history': course_history,
+            'recent_form': recent_form,
+            'actual_result': row['actual_result']  # 1 if they win/make the cut, 0 otherwise
+        })
+    
+    return pd.DataFrame(features)
+
+### Step 3: Train XGBoost Model with Fixed Hyperparameters ###
+data = create_feature_set()
+data = data[~data['player'].str.contains("Tiger Woods")]  # Example: Exclude specific players
+X = data.drop(columns=['player', 'actual_result'])
+y = data['actual_result']
+
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+
+# Fixed XGBoost Parameters (No Optuna Optimization)
+model = xgb.XGBClassifier(
+    n_estimators=150,
+    learning_rate=0.05,
+    max_depth=6,
+    min_child_weight=5,
+    colsample_bytree=0.8,
+    subsample=0.8,
+    gamma=0.1,
+    reg_alpha=0.1,
+    reg_lambda=1.0
+)
+
+model.fit(X_train, y_train, eval_set=[(X_test, y_test)], early_stopping_rounds=10, verbose=False)
+
+### Define `predict_ev_bets()` before calling it ###
+def predict_ev_bets():
+    data = create_feature_set()
+    data['predicted_win_prob'] = model.predict_proba(data.drop(columns=['player', 'actual_result']))[:,1]
+    data['EV'] = (data['predicted_win_prob'] * data['odds']) - 1  # Expected value formula
+    return data.sort_values(by='EV', ascending=False).head(5)
+
+positive_ev_bets = predict_ev_bets()
+print(positive_ev_bets)
